@@ -19,6 +19,8 @@ pub struct Connection {
     db: Db,
     /// Set by PSYNC to switch this connection into replica-streaming mode.
     enter_repl_mode: bool,
+    /// Set by QUIT — send OK then close.
+    quit: bool,
 }
 
 impl Connection {
@@ -29,6 +31,7 @@ impl Connection {
             read_buf: BytesMut::with_capacity(4096),
             db,
             enter_repl_mode: false,
+            quit: false,
         }
     }
 
@@ -62,6 +65,8 @@ impl Connection {
                             tracing::debug!("Write error ({peer}): {e}");
                             return;
                         }
+                        // QUIT: send OK then drop connection.
+                        if self.quit { return; }
                         // PSYNC sets this flag — switch into replication streaming mode.
                         if self.enter_repl_mode {
                             self.stream_to_replica(&peer).await;
@@ -167,6 +172,102 @@ impl Connection {
             "SELECT" => {
                 // We support only db0; accept but ignore other index
                 RespValue::ok()
+            }
+
+            // ── connection / protocol ────────────────────────────────────────
+            "QUIT" => {
+                self.quit = true;
+                RespValue::ok()
+            }
+            "AUTH" => {
+                // No authentication configured — always succeed.
+                RespValue::ok()
+            }
+            "HELLO" => {
+                // Respond with RESP2 server info regardless of requested version.
+                // This satisfies clients that send HELLO 2 or HELLO 3 without
+                // forcing them to fall back (which produces warnings in some clients).
+                let role = self.db.replication.role.read();
+                let role_str = match &*role {
+                    Role::Standalone | Role::Primary => "master",
+                    Role::Replica { .. } => "slave",
+                };
+                RespValue::array(vec![
+                    RespValue::bulk(b"server".to_vec()),
+                    RespValue::bulk(b"boolcache".to_vec()),
+                    RespValue::bulk(b"version".to_vec()),
+                    RespValue::bulk(env!("CARGO_PKG_VERSION").as_bytes().to_vec()),
+                    RespValue::bulk(b"proto".to_vec()),
+                    RespValue::integer(2),
+                    RespValue::bulk(b"id".to_vec()),
+                    RespValue::integer(0),
+                    RespValue::bulk(b"mode".to_vec()),
+                    RespValue::bulk(b"standalone".to_vec()),
+                    RespValue::bulk(b"role".to_vec()),
+                    RespValue::bulk(role_str.as_bytes().to_vec()),
+                    RespValue::bulk(b"modules".to_vec()),
+                    RespValue::array(vec![]),
+                ])
+            }
+            "CLIENT" => {
+                let sub = args.get(1).map(|a| a.to_ascii_uppercase());
+                match sub.as_deref() {
+                    Some(b"SETNAME") => RespValue::ok(),
+                    Some(b"GETNAME") => RespValue::nil(),
+                    Some(b"ID")      => RespValue::integer(0),
+                    Some(b"INFO")    => RespValue::bulk(b"id=0 addr=0.0.0.0:0 cmd=client\n".to_vec()),
+                    Some(b"LIST")    => RespValue::bulk(b"id=0 addr=0.0.0.0:0 cmd=client\n".to_vec()),
+                    Some(b"NO-EVICT") | Some(b"NO-TOUCH") | Some(b"REPLY") => RespValue::ok(),
+                    _ => RespValue::ok(),
+                }
+            }
+            "CONFIG" => {
+                let sub = args.get(1).map(|a| a.to_ascii_uppercase());
+                match sub.as_deref() {
+                    Some(b"GET")       => RespValue::array(vec![]), // empty — no config exposed
+                    Some(b"SET")       => RespValue::ok(),
+                    Some(b"RESETSTAT") => RespValue::ok(),
+                    Some(b"REWRITE")   => RespValue::ok(),
+                    _ => RespValue::ok(),
+                }
+            }
+            "COMMAND" => {
+                let sub = args.get(1).map(|a| a.to_ascii_uppercase());
+                match sub.as_deref() {
+                    Some(b"COUNT") => RespValue::integer(0),
+                    Some(b"DOCS")  => RespValue::array(vec![]),
+                    Some(b"INFO")  => RespValue::array(vec![]),
+                    Some(b"LIST")  => RespValue::array(vec![]),
+                    _              => RespValue::array(vec![]),
+                }
+            }
+            "RESET" => {
+                // RESP3 soft-reset — just acknowledge.
+                RespValue::SimpleString("RESET".into())
+            }
+            "OBJECT" => {
+                // OBJECT ENCODING / REFCOUNT / IDLETIME — return a safe stub.
+                RespValue::error("ERR no such key")
+            }
+            "WAIT" => {
+                // WAIT numreplicas timeout — return 0 replicas confirmed.
+                RespValue::integer(0)
+            }
+            "DEBUG" => {
+                RespValue::ok()
+            }
+            "LATENCY" => {
+                RespValue::array(vec![])
+            }
+            "SLOWLOG" => {
+                RespValue::array(vec![])
+            }
+            "MEMORY" => {
+                let sub = args.get(1).map(|a| a.to_ascii_uppercase());
+                match sub.as_deref() {
+                    Some(b"USAGE") => RespValue::nil(),
+                    _              => RespValue::integer(0),
+                }
             }
 
             // ── replication ──────────────────────────────────────────────────
