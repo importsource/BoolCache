@@ -1,0 +1,5 @@
+/target/
+*.aof
+*.rdb
+dump.rdb
+appendonly.aof

@@ -1,0 +1,18 @@
+[package]
+name = "boolcache-server"
+version.workspace = true
+edition.workspace = true
+description = "RESP-compatible TCP server wrapping boolcache"
+
+[[bin]]
+name = "boolcache-server"
+path = "src/main.rs"
+
+[dependencies]
+boolcache = { path = "../boolcache" }
+bytes.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+thiserror.workspace = true
