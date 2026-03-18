@@ -8,6 +8,7 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
 
 use crate::error::{Error, Result};
+use crate::persistence::atomic_rename;
 use crate::store::Store;
 
 const MAGIC: &[u8; 8] = b"BOOLRDB0";
@@ -70,7 +71,7 @@ pub fn save(path: &Path, store: &Store) -> Result<()> {
         w.write_all(&encoded)?;
         w.flush()?;
     }
-    std::fs::rename(&tmp, path)?;
+    atomic_rename(&tmp, path)?;
     Ok(())
 }
 

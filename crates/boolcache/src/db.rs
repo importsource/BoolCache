@@ -174,7 +174,7 @@ impl Db {
             let path = self.config.dir.join("appendonly.aof");
             let tmp = self.config.dir.join("appendonly.aof.tmp");
             crate::persistence::aof::rewrite(&tmp, &store)?;
-            std::fs::rename(&tmp, &path)?;
+            crate::persistence::atomic_rename(&tmp, &path)?;
             let writer = AofWriter::open(&path, self.config.aof_fsync.clone())?;
             *aof_arc.lock() = writer;
             tracing::info!("AOF rewrite complete");
